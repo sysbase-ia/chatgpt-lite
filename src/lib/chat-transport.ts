@@ -12,6 +12,9 @@ type ChatRequestBody = {
   prompt: string
   messages: ChatCompletionMessage[]
   input: MessageContent
+  sessionId?: string
+  agentId?: string
+  think?: string
 }
 
 function toChatCompletionMessage(message: ChatMessage): ChatCompletionMessage {
@@ -40,7 +43,10 @@ export function createChatTransport() {
       const payload: ChatRequestBody = {
         prompt,
         messages: historyMessages.map(toChatCompletionMessage),
-        input: inputMessage ? buildMessageContentFromParts(inputMessage.parts ?? []) : ''
+        input: inputMessage ? buildMessageContentFromParts(inputMessage.parts ?? []) : '',
+        sessionId: typeof body?.sessionId === 'string' ? body.sessionId : undefined,
+        agentId: typeof body?.agentId === 'string' ? body.agentId : undefined,
+        think: typeof body?.think === 'string' ? body.think : undefined
       }
 
       return {

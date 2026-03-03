@@ -50,6 +50,8 @@ function Chat(_: ChatProps, ref: React.ForwardedRef<ChatRef>): React.JSX.Element
 
   const [composerError, setComposerError] = useState<string | null>(null)
   const [hasActiveChat, setHasActiveChat] = useState(Boolean(currentChatId))
+  const [urlAgentOverride, setURLAgentOverride] = useState<string>('')
+  const [urlThinkOverride, setURLThinkOverride] = useState<string>('')
 
   const transport = useMemo(() => createChatTransport(), [])
   const messagesRef = useRef<ChatMessage[]>([])
@@ -112,6 +114,13 @@ function Chat(_: ChatProps, ref: React.ForwardedRef<ChatRef>): React.JSX.Element
   useEffect(() => {
     setComposerError(null)
   }, [currentChatId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const search = new URLSearchParams(window.location.search)
+    setURLAgentOverride(search.get('agent')?.trim() ?? '')
+    setURLThinkOverride(search.get('think')?.trim() ?? '')
+  }, [])
 
   useEffect(() => {
     activeChatIdRef.current = currentChatId ?? null
@@ -199,7 +208,10 @@ function Chat(_: ChatProps, ref: React.ForwardedRef<ChatRef>): React.JSX.Element
       try {
         await sendMessage(userMessage, {
           body: {
-            prompt: personaPrompt
+            prompt: personaPrompt,
+            sessionId: activeChat.id,
+            agentId: urlAgentOverride || undefined,
+            think: urlThinkOverride || undefined
           }
         })
         return true

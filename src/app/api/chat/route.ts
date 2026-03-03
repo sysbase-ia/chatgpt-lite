@@ -105,6 +105,20 @@ type ChatCompletionMessage = {
   content: MessageContent
 }
 
+type ChatRequestPayload = {
+  prompt: string
+  messages: ChatCompletionMessage[]
+  input: MessageContent
+  sessionId?: string
+  agentId?: string
+  think?: string
+}
+
+type ControlPlaneChatResponse = {
+  text?: string
+  error?: string
+}
+
 function convertToCoreMessage(msg: ChatCompletionMessage): ModelMessage {
   if (msg.role === 'system') {
     return {
@@ -170,14 +184,93 @@ function convertToCoreMessage(msg: ChatCompletionMessage): ModelMessage {
 export async function POST(req: NextRequest): Promise<Response> {
   try {
     const toToolSetEntry = <T>(tool: T): ToolSet[string] => tool as ToolSet[string]
-    const { prompt, messages, input } = (await req.json()) as {
-      prompt: string
-      messages: ChatCompletionMessage[]
-      input: MessageContent
-    }
+    const payload = (await req.json()) as ChatRequestPayload
+    const { prompt, messages, input, sessionId, agentId, think } = payload
 
     const acceptHeader = req.headers.get('accept') ?? ''
     const wantsUiStream = acceptHeader.includes('text/event-stream')
+    const controlPlaneChatURL = process.env.CONTROL_PLANE_CHAT_URL?.trim()
+    const controlPlaneChatStreamURL = process.env.CONTROL_PLANE_CHAT_STREAM_URL?.trim()
+    const controlPlaneChatToken = process.env.CONTROL_PLANE_CHAT_TOKEN?.trim()
+    if (controlPlaneChatURL) {
+      const controlPlanePayload = {
+        prompt,
+        messages,
+        input,
+        sessionId: sessionId ?? undefined,
+        agentId: agentId ?? process.env.CONTROL_PLANE_AGENT_ID?.trim() ?? undefined,
+        think: think ?? process.env.CONTROL_PLANE_THINK?.trim() ?? undefined
+      }
+      const controlPlaneHeaders = {
+        'Content-Type': 'application/json',
+        ...(controlPlaneChatToken ? { Authorization: `Bearer ${controlPlaneChatToken}` } : {})
+      }
+
+      if (wantsUiStream && controlPlaneChatStreamURL) {
+        const streamResponse = await fetch(controlPlaneChatStreamURL, {
+          method: 'POST',
+          headers: {
+            ...controlPlaneHeaders,
+            Accept: 'text/event-stream'
+          },
+          body: JSON.stringify(controlPlanePayload)
+        })
+        if (!streamResponse.ok || !streamResponse.body) {
+          let errorText = ''
+          try {
+            errorText = (await streamResponse.text()).trim()
+          } catch {
+            // ignore
+          }
+          throw new Error(errorText || `control-plane stream http ${streamResponse.status}`)
+        }
+        return new Response(streamResponse.body, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'x-vercel-ai-ui-message-stream': 'v1'
+          }
+        })
+      }
+
+      const response = await fetch(controlPlaneChatURL, {
+        method: 'POST',
+        headers: controlPlaneHeaders,
+        body: JSON.stringify(controlPlanePayload)
+      })
+
+      let body: ControlPlaneChatResponse = {}
+      try {
+        body = (await response.json()) as ControlPlaneChatResponse
+      } catch {
+        // keep empty payload fallback
+      }
+      if (!response.ok || (body.error && body.error.trim())) {
+        const msg = body.error?.trim() || `control-plane chat http ${response.status}`
+        throw new Error(msg)
+      }
+      const text = (body.text ?? '').trim()
+      if (!wantsUiStream) {
+        return new Response(text, {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        })
+      }
+
+      const stream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          const messageId = `cp-${Date.now()}`
+          writer.write({ type: 'start', messageId } as any)
+          writer.write({ type: 'text-start', id: messageId } as any)
+          writer.write({ type: 'text-delta', id: messageId, delta: text, text } as any)
+          writer.write({ type: 'text-end', id: messageId } as any)
+          writer.write({ type: 'finish' } as any)
+        }
+      })
+      return createUIMessageStreamResponse({ stream })
+    }
 
     const messagesWithHistory: ModelMessage[] = [
       { role: 'system', content: prompt },
