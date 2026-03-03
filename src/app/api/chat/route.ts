@@ -264,7 +264,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           const messageId = `cp-${Date.now()}`
           writer.write({ type: 'start', messageId } as any)
           writer.write({ type: 'text-start', id: messageId } as any)
-          writer.write({ type: 'text-delta', id: messageId, delta: text, text } as any)
+          writer.write({ type: 'text-delta', id: messageId, delta: text } as any)
           writer.write({ type: 'text-end', id: messageId } as any)
           writer.write({ type: 'finish' } as any)
         }
