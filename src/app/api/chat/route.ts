@@ -1,11 +1,11 @@
 import type { NextRequest } from 'next/server'
 import { azure as azureProvider, createAzure } from '@ai-sdk/azure'
 import { createOpenAI } from '@ai-sdk/openai'
-import type { ModelMessage } from '@ai-sdk/provider-utils'
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   streamText,
+  type ModelMessage,
   type LanguageModel,
   type ToolSet
 } from 'ai'
