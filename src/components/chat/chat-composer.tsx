@@ -18,6 +18,7 @@ import {
 } from '@/components/chat/chat-attachments'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { MAX_INLINE_IMAGE_SIZE_BYTES, MAX_UPLOAD_SIZE_BYTES, formatBytesToMB } from '@/lib/upload-limits'
 import { cn } from '@/lib/utils'
 import type {
   SpeechRecognitionErrorEvent,
@@ -116,16 +117,40 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     let parseFileFn: ((file: File) => Promise<UploadedDocument>) | null = null
 
     for (const file of Array.from(files)) {
+      if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+        toast.error(
+          `File "${file.name}" is too large (${formatBytesToMB(file.size)}MB). Max allowed is 100MB.`
+        )
+        continue
+      }
+
       if (isImageFile(file)) {
-        readFileAsDataUrl(file)
-          .then((base64) => {
-            const mimeType = file.type || `image/${file.name.split('.').pop()}`
-            setUploadedImages((prev) => [...prev, { url: base64, mimeType, name: file.name }])
-          })
-          .catch((error) => {
-            console.error('Error reading file:', error)
-            toast.error(`Failed to load image: ${file.name}`)
-          })
+        if (file.size <= MAX_INLINE_IMAGE_SIZE_BYTES) {
+          readFileAsDataUrl(file)
+            .then((base64) => {
+              const mimeType = file.type || `image/${file.name.split('.').pop()}`
+              setUploadedImages((prev) => [...prev, { url: base64, mimeType, name: file.name }])
+            })
+            .catch((error) => {
+              console.error('Error reading file:', error)
+              toast.error(`Failed to load image: ${file.name}`)
+            })
+        } else {
+          try {
+            if (!parseFileFn) {
+              const { parseFile } = await import('@/lib/file-parser')
+              parseFileFn = parseFile
+            }
+            const parsed = await parseFileFn(file)
+            setUploadedDocuments((prev) => [...prev, parsed])
+            toast.success(
+              `Large image "${file.name}" uploaded as file reference (${formatBytesToMB(file.size)}MB)`
+            )
+          } catch (error) {
+            console.error('Error uploading large image:', error)
+            toast.error(`Failed to upload image: ${file.name}`)
+          }
+        }
         continue
       }
 
@@ -269,26 +294,51 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     if (!items) return
 
     let didPreventDefault = false
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      if (!item?.type?.startsWith('image/')) continue
+    const parsePasted = async () => {
+      let parseFileFn: ((file: File) => Promise<UploadedDocument>) | null = null
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (!item?.type?.startsWith('image/')) continue
 
-      if (!didPreventDefault) {
-        event.preventDefault()
-        didPreventDefault = true
+        if (!didPreventDefault) {
+          event.preventDefault()
+          didPreventDefault = true
+        }
+
+        const file = item.getAsFile()
+        if (!file) continue
+
+        if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+          toast.error(`Pasted image is too large (${formatBytesToMB(file.size)}MB). Max is 100MB.`)
+          continue
+        }
+
+        if (file.size <= MAX_INLINE_IMAGE_SIZE_BYTES) {
+          readFileAsDataUrl(file)
+            .then((base64) => {
+              setUploadedImages((prev) => [...prev, { url: base64, mimeType: file.type }])
+            })
+            .catch(() => {
+              toast.error('Failed to load pasted image')
+            })
+          continue
+        }
+
+        try {
+          if (!parseFileFn) {
+            const { parseFile } = await import('@/lib/file-parser')
+            parseFileFn = parseFile
+          }
+          const parsed = await parseFileFn(file)
+          setUploadedDocuments((prev) => [...prev, parsed])
+          toast.success(`Large pasted image uploaded as file reference (${formatBytesToMB(file.size)}MB)`)
+        } catch {
+          toast.error('Failed to upload pasted image')
+        }
       }
-
-      const file = item.getAsFile()
-      if (!file) continue
-
-      readFileAsDataUrl(file)
-        .then((base64) => {
-          setUploadedImages((prev) => [...prev, { url: base64, mimeType: file.type }])
-        })
-        .catch(() => {
-          toast.error('Failed to load pasted image')
-        })
     }
+
+    void parsePasted()
   }, [])
 
   const toggleVoiceInput = useCallback(() => {
@@ -497,7 +547,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*,.heic,.heif,.txt,.csv,.pdf,.xlsx,.xls,text/plain,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              accept="*/*"
               multiple
               className="hidden"
               onChange={handleFileUpload}
@@ -516,7 +566,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" className="text-xs">
-                Attach file (images, PDF, TXT, CSV, Excel)
+                Attach file (images, ZIP, PDF, TXT, CSV, Excel, binarios) up to 100MB
               </TooltipContent>
             </Tooltip>
             {showClear && (

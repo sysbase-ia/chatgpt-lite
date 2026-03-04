@@ -1,5 +1,8 @@
-// File size limit: 10MB
-const MAX_PDF_SIZE = 10 * 1024 * 1024 // 10MB in bytes
+import {
+  MAX_PARSEABLE_FILE_SIZE_BYTES,
+  MAX_UPLOAD_SIZE_BYTES,
+  formatBytesToMB
+} from '@/lib/upload-limits'
 
 function formatRowsAsTable(rows: unknown[][], addSeparatorAfterHeader = true): string {
   let content = ''
@@ -27,15 +30,75 @@ export interface ParsedFile {
   content: string
   mimeType: string
   images?: PDFImage[]
+  localPath?: string
+  sizeBytes?: number
+}
+
+export interface UploadedFileReference {
+  name: string
+  mimeType: string
+  sizeBytes: number
+  localPath: string
+}
+
+function buildFileReferenceContent(reference: UploadedFileReference, note: string): string {
+  const lines = [
+    `[File Attachment: ${reference.name}]`,
+    `mime_type: ${reference.mimeType}`,
+    `size_bytes: ${reference.sizeBytes}`,
+    `size_mb: ${formatBytesToMB(reference.sizeBytes)}`,
+    `local_path: ${reference.localPath}`,
+    `local_url: file://${reference.localPath}`,
+    `note: ${note}`,
+    'Use local_path/local_url from the host machine to inspect this file.'
+  ]
+
+  return lines.join('\n')
+}
+
+export async function uploadFileReference(
+  file: File,
+  sessionId = 'web-chat'
+): Promise<UploadedFileReference> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('sessionId', sessionId)
+
+  const response = await fetch('/api/upload', {
+    method: 'POST',
+    body: formData
+  })
+
+  const data = await response.json()
+  if (!response.ok) {
+    throw new Error(data?.error || 'Failed to upload file')
+  }
+
+  return {
+    name: data.name,
+    mimeType: data.mimeType || file.type || 'application/octet-stream',
+    sizeBytes: Number(data.sizeBytes || file.size),
+    localPath: data.localPath
+  }
+}
+
+async function parseAsUploadedReference(file: File, note: string): Promise<ParsedFile> {
+  const reference = await uploadFileReference(file)
+  return {
+    name: file.name,
+    content: buildFileReferenceContent(reference, note),
+    mimeType: file.type || reference.mimeType,
+    localPath: reference.localPath,
+    sizeBytes: reference.sizeBytes
+  }
 }
 
 // Parse PDF file (server-side via API)
 export const parsePDF = async (file: File): Promise<ParsedFile> => {
   try {
-    // Check file size before uploading (10MB limit)
-    if (file.size > MAX_PDF_SIZE) {
-      const sizeMB = (file.size / (1024 * 1024)).toFixed(2)
-      throw new Error(`File size (${sizeMB}MB) exceeds the maximum allowed size of 10MB`)
+    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+      const sizeMB = formatBytesToMB(file.size)
+      throw new Error(`File size (${sizeMB}MB) exceeds the maximum allowed size of 100MB`)
     }
 
     const formData = new FormData()
@@ -67,14 +130,25 @@ export const parsePDF = async (file: File): Promise<ParsedFile> => {
       name: file.name,
       content,
       mimeType: file.type,
-      images: data.images || []
+      images: data.images || [],
+      sizeBytes: file.size
     }
   } catch (error) {
     console.error('PDF parsing error:', error)
-    return {
-      name: file.name,
-      content: `[PDF File: ${file.name}]\n\nUnable to extract text from this PDF. The file may be:\n- Image-based (scanned) PDF requiring OCR\n- Encrypted or password-protected\n- Corrupted or in an unsupported format\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      mimeType: file.type
+
+    // Fall back to a local file reference when parsing fails.
+    try {
+      return await parseAsUploadedReference(
+        file,
+        'PDF parsing failed; original file stored as local reference.'
+      )
+    } catch {
+      return {
+        name: file.name,
+        content: `[PDF File: ${file.name}]\n\nUnable to extract text from this PDF. The file may be:\n- Image-based (scanned) PDF requiring OCR\n- Encrypted or password-protected\n- Corrupted or in an unsupported format\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        mimeType: file.type,
+        sizeBytes: file.size
+      }
     }
   }
 }
@@ -85,7 +159,8 @@ export const parseTXT = async (file: File): Promise<ParsedFile> => {
   return {
     name: file.name,
     content: text,
-    mimeType: file.type
+    mimeType: file.type,
+    sizeBytes: file.size
   }
 }
 
@@ -103,7 +178,8 @@ export const parseCSV = async (file: File): Promise<ParsedFile> => {
         resolve({
           name: file.name,
           content,
-          mimeType: file.type
+          mimeType: file.type,
+          sizeBytes: file.size
         })
       },
       error: (error) => {
@@ -137,7 +213,8 @@ export const parseExcel = async (file: File): Promise<ParsedFile> => {
   return {
     name: file.name,
     content,
-    mimeType: file.type
+    mimeType: file.type,
+    sizeBytes: file.size
   }
 }
 
@@ -169,13 +246,25 @@ const fileTypeParsers: Array<{ test: (type: string, name: string) => boolean; pa
 
 // Main file parser function
 export async function parseFile(file: File): Promise<ParsedFile> {
+  if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+    const sizeMB = formatBytesToMB(file.size)
+    throw new Error(`File size (${sizeMB}MB) exceeds the maximum allowed size of 100MB`)
+  }
+
   const fileType = file.type.toLowerCase()
   const fileName = file.name.toLowerCase()
 
   const parser = fileTypeParsers.find(({ test }) => test(fileType, fileName))
-  if (parser) {
-    return parser.parse(file)
+  if (!parser) {
+    return parseAsUploadedReference(file, 'Binary or unsupported type stored as local reference.')
   }
 
-  throw new Error(`Unsupported file type: ${fileType || fileName}`)
+  if (file.size > MAX_PARSEABLE_FILE_SIZE_BYTES) {
+    return parseAsUploadedReference(
+      file,
+      'File is large; stored as local reference to avoid oversized chat payloads.'
+    )
+  }
+
+  return parser.parse(file)
 }

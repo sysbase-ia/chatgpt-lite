@@ -24,6 +24,7 @@ type RootLayoutProps = {
 }
 
 export default function RootLayout({ children }: RootLayoutProps): React.JSX.Element {
+  const enableVercelAnalytics = process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS === '1'
   return (
     <html lang="en" suppressHydrationWarning className="h-full">
       <body className="h-dvh overflow-hidden text-sm antialiased">
@@ -36,7 +37,7 @@ export default function RootLayout({ children }: RootLayoutProps): React.JSX.Ele
             </TooltipProvider>
           </ThemeProvider>
         </AppContextProvider>
-        <Analytics />
+        {enableVercelAnalytics && <Analytics />}
       </body>
     </html>
   )

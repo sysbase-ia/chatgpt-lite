@@ -20,7 +20,7 @@ ChatGPT Lite is a lightweight ChatGPT web application built with Next.js 16 and 
 - **Persona System** - Create and switch between custom AI personalities with different system prompts
 - **Persistent Chat History** - All conversations saved locally with no database required
 - **Dual Provider Support** - Works with both OpenAI and Azure OpenAI APIs
-- **File Attachments** - Upload images, PDFs, spreadsheets (XLSX/CSV), and text files directly in chat
+- **File Attachments (up to 100MB)** - Upload images, ZIPs, PDFs, spreadsheets (XLSX/CSV), text, and other binary files directly in chat
 - **Voice Input** - Dictate messages using Web Speech API with continuous recognition
 - **Web Search Integration** - Azure and OpenAI models can search the web when needed, with source citations
 

@@ -1,11 +1,9 @@
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { NextResponse, type NextRequest } from 'next/server'
+import { MAX_UPLOAD_SIZE_BYTES, formatBytesToMB } from '@/lib/upload-limits'
 
 export const runtime = 'nodejs'
-
-// File size limit: 10MB
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB in bytes
 
 // Configure worker path for Node.js environment
 // Convert to file:// URL for Windows compatibility
@@ -44,11 +42,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'File must be a PDF' }, { status: 400 })
     }
 
-    // Check file size (10MB limit)
-    if (file.size > MAX_FILE_SIZE) {
-      const sizeMB = (file.size / (1024 * 1024)).toFixed(2)
+    // Check file size (100MB limit)
+    if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+      const sizeMB = formatBytesToMB(file.size)
       return NextResponse.json(
-        { error: `File size (${sizeMB}MB) exceeds the maximum allowed size of 10MB` },
+        { error: `File size (${sizeMB}MB) exceeds the maximum allowed size of 100MB` },
         { status: 413 }
       )
     }

@@ -11,11 +11,36 @@ export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.hei
 export const SUPPORTED_DOCUMENT_MIME_TYPES = [
   'text/plain',
   'text/csv',
+  'application/json',
+  'application/xml',
   'application/pdf',
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/gzip',
+  'application/x-gzip',
+  'application/x-tar',
+  'application/octet-stream',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel'
 ]
-export const DOCUMENT_EXTENSIONS = ['.txt', '.csv', '.pdf', '.xlsx', '.xls']
+export const DOCUMENT_EXTENSIONS = [
+  '.txt',
+  '.csv',
+  '.pdf',
+  '.xlsx',
+  '.xls',
+  '.json',
+  '.xml',
+  '.md',
+  '.log',
+  '.zip',
+  '.gz',
+  '.tar',
+  '.tgz',
+  '.rar',
+  '.7z',
+  '.bin'
+]
 
 export type UploadedImage = { url: string; mimeType: string; name?: string }
 export type UploadedDocument = ParsedFile
@@ -35,12 +60,19 @@ export function isImageFile(file: File): boolean {
 }
 
 export function isDocumentFile(file: File): boolean {
+  if (isImageFile(file)) {
+    return false
+  }
   const fileName = file.name.toLowerCase()
   const fileType = file.type.toLowerCase()
-  return (
-    SUPPORTED_DOCUMENT_MIME_TYPES.includes(fileType) ||
-    DOCUMENT_EXTENSIONS.some((ext) => fileName.endsWith(ext))
-  )
+  if (SUPPORTED_DOCUMENT_MIME_TYPES.includes(fileType)) {
+    return true
+  }
+  if (DOCUMENT_EXTENSIONS.some((ext) => fileName.endsWith(ext))) {
+    return true
+  }
+  // Allow any non-image file to pass through the generic upload/reference flow.
+  return true
 }
 
 export function buildUserMessageParts(

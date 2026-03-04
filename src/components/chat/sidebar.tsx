@@ -2,6 +2,7 @@
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -16,6 +17,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import {
   Bot,
+  BrainCircuit,
   MessageSquare,
   MoreHorizontal,
   PanelLeft,
@@ -42,10 +44,13 @@ export function SideBar(): React.JSX.Element {
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const pathname = usePathname()
 
   const isDesktop = useMediaQuery('(min-width: 768px)')
   const isHydrated = isDesktop !== undefined
   const sidebarState = toggleSidebar ? 'open' : 'closed'
+  const isChatRoute = pathname.startsWith('/chat')
+  const isTopologyRoute = pathname.startsWith('/network') || pathname.startsWith('/chat/network')
 
   const dismissIfMobile = useCallback(() => {
     if (isDesktop === false) {
@@ -292,15 +297,45 @@ export function SideBar(): React.JSX.Element {
             </Button>
           </div>
           {/* New chat button */}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleNewChat}
-            className="text-foreground border-border/60 hover:bg-primary/5 hover:border-primary/30 mb-4 justify-start rounded-lg"
-          >
-            <Plus className="size-4 shrink-0" />
-            <span className="font-medium">New chat</span>
-          </Button>
+          {isChatRoute && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleNewChat}
+              className="text-foreground border-border/60 hover:bg-primary/5 hover:border-primary/30 mb-3 justify-start rounded-lg"
+            >
+              <Plus className="size-4 shrink-0" />
+              <span className="font-medium">New chat</span>
+            </Button>
+          )}
+          <div className="mb-4 space-y-1">
+            <Link
+              href="/chat"
+              onClick={dismissIfMobile}
+              className={cn(
+                'focus-visible:ring-ring/50 focus-visible:ring-offset-background flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
+                isChatRoute && !isTopologyRoute
+                  ? 'bg-primary/10 border-primary/25 text-foreground'
+                  : 'border-border/60 text-muted-foreground hover:bg-primary/5 hover:border-primary/25 hover:text-foreground'
+              )}
+            >
+              <MessageSquare className="size-4 shrink-0" />
+              <span>Chat</span>
+            </Link>
+            <Link
+              href="/chat/network"
+              onClick={dismissIfMobile}
+              className={cn(
+                'focus-visible:ring-ring/50 focus-visible:ring-offset-background flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
+                isTopologyRoute
+                  ? 'bg-primary/10 border-primary/25 text-foreground'
+                  : 'border-border/60 text-muted-foreground hover:bg-primary/5 hover:border-primary/25 hover:text-foreground'
+              )}
+            >
+              <BrainCircuit className="size-4 shrink-0" />
+              <span>Mapa neuronal</span>
+            </Link>
+          </div>
           {/* Chat List - viewport override fixes Radix's display:table that breaks text truncation */}
           <ScrollArea className="flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
             <div className="space-y-0.5" role="listbox" aria-label="Chats">
@@ -350,25 +385,26 @@ export function SideBar(): React.JSX.Element {
               )}
             </div>
           </ScrollArea>
-          {/* Persona Store Button */}
-          <div className="mt-auto pt-4">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={handleOpenPersonaLibrary}
-              className="group hover:bg-primary/5 relative w-full justify-start overflow-hidden rounded-xl transition-colors duration-200 hover:shadow-sm"
-            >
-              <span className="bg-primary/5 pointer-events-none absolute inset-0 translate-y-full transition-transform duration-200 ease-out group-hover:translate-y-0" />
-              <Bot className="text-primary/60 group-hover:text-primary relative mr-2.5 size-4 transition-colors duration-200" />
-              <span className="relative text-sm font-medium">Persona Library</span>
-              <span
-                className="text-primary/30 group-hover:text-primary/50 relative ml-auto font-serif text-xs transition-colors duration-200"
-                aria-hidden="true"
+          {isChatRoute && (
+            <div className="mt-auto pt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleOpenPersonaLibrary}
+                className="group hover:bg-primary/5 relative w-full justify-start overflow-hidden rounded-xl transition-colors duration-200 hover:shadow-sm"
               >
-                ✦
-              </span>
-            </Button>
-          </div>
+                <span className="bg-primary/5 pointer-events-none absolute inset-0 translate-y-full transition-transform duration-200 ease-out group-hover:translate-y-0" />
+                <Bot className="text-primary/60 group-hover:text-primary relative mr-2.5 size-4 transition-colors duration-200" />
+                <span className="relative text-sm font-medium">Persona Library</span>
+                <span
+                  className="text-primary/30 group-hover:text-primary/50 relative ml-auto font-serif text-xs transition-colors duration-200"
+                  aria-hidden="true"
+                >
+                  ✦
+                </span>
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </>
