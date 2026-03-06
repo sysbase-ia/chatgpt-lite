@@ -1,13 +1,32 @@
 'use client'
 
+import { useCallback, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import ThemeOptionsDropdown from '@/components/theme/options-dropdown'
 import ThemeToggle from '@/components/theme/toggle'
 import { Button } from '@/components/ui/button'
 import { useAppContext } from '@/contexts/app'
-import { Github, PanelLeft } from 'lucide-react'
+import { Github, LogOut, PanelLeft } from 'lucide-react'
 
 export function Header(): React.JSX.Element {
+  const router = useRouter()
   const { toggleSidebar, onToggleSidebar } = useAppContext()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  const onLogout = useCallback(async () => {
+    if (loggingOut) {
+      return
+    }
+    setLoggingOut(true)
+    try {
+      await fetch('/api/auth/keycloak/logout', { method: 'POST' })
+    } finally {
+      router.replace('/login')
+      router.refresh()
+      setLoggingOut(false)
+    }
+  }, [loggingOut, router])
+
   return (
     <header className="bg-background/95 border-border supports-[backdrop-filter]:bg-background/80 sticky top-0 z-20 w-full border-b pt-[env(safe-area-inset-top)] backdrop-blur-sm">
       <div className="flex items-center gap-2 px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
@@ -31,6 +50,18 @@ export function Header(): React.JSX.Element {
         </div>
         <nav className="flex flex-1 items-center justify-end gap-1 sm:gap-2">
           <ThemeToggle />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onLogout}
+            disabled={loggingOut}
+            className="hover:bg-primary/5 gap-1.5 rounded-full px-3 text-xs"
+            title="Cerrar sesión"
+            aria-label="Cerrar sesión"
+          >
+            <LogOut className="size-4" />
+            <span>{loggingOut ? 'Saliendo...' : 'Salir'}</span>
+          </Button>
           <Button
             variant="ghost"
             size="icon"

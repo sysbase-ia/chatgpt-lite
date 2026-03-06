@@ -2,7 +2,7 @@
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -43,8 +43,11 @@ export function SideBar(): React.JSX.Element {
   } = useContext(ChatContext)
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [canSeeTopologyMenu, setCanSeeTopologyMenu] = useState(false)
+  const [permissionsLoaded, setPermissionsLoaded] = useState(false)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const pathname = usePathname()
+  const router = useRouter()
 
   const isDesktop = useMediaQuery('(min-width: 768px)')
   const isHydrated = isDesktop !== undefined
@@ -60,8 +63,11 @@ export function SideBar(): React.JSX.Element {
 
   const handleNewChat = useCallback(() => {
     onCreateDefaultChat()
+    if (isTopologyRoute) {
+      router.push('/chat')
+    }
     dismissIfMobile()
-  }, [onCreateDefaultChat, dismissIfMobile])
+  }, [dismissIfMobile, isTopologyRoute, onCreateDefaultChat, router])
 
   const handleOpenPersonaLibrary = useCallback(() => {
     openPersonaPanel()
@@ -104,6 +110,49 @@ export function SideBar(): React.JSX.Element {
     prevIsDesktopRef.current = isDesktop
   }, [isDesktop, toggleSidebar, onToggleSidebar])
 
+  useEffect(() => {
+    let cancelled = false
+    const loadPermissions = async () => {
+      try {
+        const response = await fetch('/api/auth/keycloak/permissions', {
+          method: 'GET',
+          cache: 'no-store'
+        })
+        if (!response.ok) {
+          throw new Error(`permissions http ${response.status}`)
+        }
+        const payload = (await response.json()) as {
+          permissions?: { canTopologyRead?: boolean }
+          profileAccess?: { mode?: string }
+        }
+        const canTopologyRead = Boolean(payload.permissions?.canTopologyRead)
+        const profileMode = String(payload.profileAccess?.mode || '').trim().toLowerCase()
+        const allowedByProfile = profileMode === '' || profileMode === 'all' || profileMode === 'restricted'
+        if (!cancelled) {
+          setCanSeeTopologyMenu(canTopologyRead && allowedByProfile)
+        }
+      } catch {
+        if (!cancelled) {
+          setCanSeeTopologyMenu(false)
+        }
+      } finally {
+        if (!cancelled) {
+          setPermissionsLoaded(true)
+        }
+      }
+    }
+    void loadPermissions()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (permissionsLoaded && isTopologyRoute && !canSeeTopologyMenu) {
+      router.replace('/chat')
+    }
+  }, [canSeeTopologyMenu, isTopologyRoute, permissionsLoaded, router])
+
   const pinnedChats = useMemo(() => chatList.filter((chat) => chat.pinned), [chatList])
   const recentChats = useMemo(() => chatList.filter((chat) => !chat.pinned), [chatList])
 
@@ -116,6 +165,9 @@ export function SideBar(): React.JSX.Element {
 
       const selectChat = () => {
         onChangeChat(chat)
+        if (isTopologyRoute) {
+          router.push('/chat')
+        }
         dismissIfMobile()
       }
 
@@ -240,8 +292,10 @@ export function SideBar(): React.JSX.Element {
       dismissIfMobile,
       onChangeChat,
       onDeleteChat,
+      isTopologyRoute,
       renameValue,
       renamingChatId,
+      router,
       startRename,
       updateChatPinned
     ]
@@ -322,19 +376,21 @@ export function SideBar(): React.JSX.Element {
               <MessageSquare className="size-4 shrink-0" />
               <span>Chat</span>
             </Link>
-            <Link
-              href="/chat/network"
-              onClick={dismissIfMobile}
-              className={cn(
-                'focus-visible:ring-ring/50 focus-visible:ring-offset-background flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
-                isTopologyRoute
-                  ? 'bg-primary/10 border-primary/25 text-foreground'
-                  : 'border-border/60 text-muted-foreground hover:bg-primary/5 hover:border-primary/25 hover:text-foreground'
-              )}
-            >
-              <BrainCircuit className="size-4 shrink-0" />
-              <span>Mapa neuronal</span>
-            </Link>
+            {canSeeTopologyMenu && (
+              <Link
+                href="/chat/network"
+                onClick={dismissIfMobile}
+                className={cn(
+                  'focus-visible:ring-ring/50 focus-visible:ring-offset-background flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
+                  isTopologyRoute
+                    ? 'bg-primary/10 border-primary/25 text-foreground'
+                    : 'border-border/60 text-muted-foreground hover:bg-primary/5 hover:border-primary/25 hover:text-foreground'
+                )}
+              >
+                <BrainCircuit className="size-4 shrink-0" />
+                <span>Mapa neuronal</span>
+              </Link>
+            )}
           </div>
           {/* Chat List - viewport override fixes Radix's display:table that breaks text truncation */}
           <ScrollArea className="flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">

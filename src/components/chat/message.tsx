@@ -6,7 +6,9 @@ import type {
   ChatMessage,
   ChatMessagePart,
   ChatMessageSource,
-  DocumentAttachmentData
+  DocumentAttachmentData,
+  TokenUsageData,
+  TokenUsageSnapshot
 } from '@/components/chat/interface'
 import { Markdown } from '@/components/markdown/markdown'
 import { Button } from '@/components/ui/button'
@@ -148,6 +150,27 @@ function getSourceTitle(source: ChatMessageSource): string {
   return source.title || 'Document'
 }
 
+const tokenCountFormatter = new Intl.NumberFormat()
+
+function formatTokenCount(value?: number): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '0'
+  return tokenCountFormatter.format(Math.max(0, Math.round(value)))
+}
+
+function getTokenUsageFromParts(parts: ChatMessagePart[]): TokenUsageData | undefined {
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const part = parts[i]
+    if (part.type === 'data-tokenUsage') {
+      return part.data
+    }
+  }
+  return undefined
+}
+
+function formatUsageSummary(usage: TokenUsageSnapshot): string {
+  return `total ${formatTokenCount(usage.totalTokens)} | in ${formatTokenCount(usage.inputTokens)} | out ${formatTokenCount(usage.outputTokens)}`
+}
+
 function Sources({ sources }: { sources: ChatMessageSource[] }): React.JSX.Element | null {
   if (sources.length === 0) {
     return null
@@ -217,6 +240,7 @@ function UserMessage({ message }: MessageProps): React.JSX.Element {
 function AssistantMessage({ message, isThinking }: MessageProps): React.JSX.Element {
   const parts = getMessageParts(message)
   const sources = useMemo(() => getSourcesFromParts(parts), [parts])
+  const tokenUsage = useMemo(() => getTokenUsageFromParts(parts), [parts])
   const deferredParts = useDeferredValue(parts)
   const { copy, copied } = useCopyToClipboard()
 
@@ -228,6 +252,11 @@ function AssistantMessage({ message, isThinking }: MessageProps): React.JSX.Elem
   const copyText = useMemo(() => getTextContent(parts), [parts])
   const hasTextContent = copyText.trim().length > 0
   const showThinking = Boolean(isThinking) && !hasTextContent
+  const hasUsage =
+    Boolean(tokenUsage?.request) ||
+    Boolean(tokenUsage?.session) ||
+    Boolean(tokenUsage?.model) ||
+    Boolean(tokenUsage?.modelProvider)
 
   const handleCopy = useCallback(() => {
     void copy(copyText)
@@ -245,6 +274,18 @@ function AssistantMessage({ message, isThinking }: MessageProps): React.JSX.Elem
             )}
           </div>
         </div>
+        {hasUsage && tokenUsage && (
+          <div className="text-muted-foreground border-border/50 bg-muted/35 mt-1 ml-1 rounded-lg border px-2.5 py-1.5 text-[11px] leading-relaxed">
+            {tokenUsage.request && <p>request: {formatUsageSummary(tokenUsage.request)}</p>}
+            {tokenUsage.session && <p>acumulado: {formatUsageSummary(tokenUsage.session)}</p>}
+            {(tokenUsage.modelProvider || tokenUsage.model) && (
+              <p>
+                modelo:{' '}
+                {[tokenUsage.modelProvider, tokenUsage.model].filter((value) => Boolean(value)).join(' · ')}
+              </p>
+            )}
+          </div>
+        )}
         {sources.length > 0 && <Sources sources={sources} />}
         {hasTextContent && (
           <Button

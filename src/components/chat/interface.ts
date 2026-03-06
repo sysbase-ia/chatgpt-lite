@@ -25,8 +25,28 @@ export type DocumentAttachmentData = {
   images?: PDFImage[]
 }
 
+export type TokenUsageSnapshot = {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+export type TokenUsageData = {
+  request?: TokenUsageSnapshot
+  session?: TokenUsageSnapshot
+  modelProvider?: string
+  model?: string
+  promptTokens?: number
+  capturedAt?: string
+  agentId?: string
+  sessionKey?: string
+}
+
 export type ChatMessageDataParts = {
   document: DocumentAttachmentData
+  tokenUsage: TokenUsageData
 }
 
 export type ChatMessagePart = UIMessagePart<ChatMessageDataParts, UITools>

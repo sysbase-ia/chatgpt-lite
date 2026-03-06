@@ -224,7 +224,15 @@ function Chat(_: ChatProps, ref: React.ForwardedRef<ChatRef>): React.JSX.Element
         return false
       }
     },
-    [ensureActiveChat, getPersonaById, isChatHydrated, saveMessages, sendMessage]
+    [
+      ensureActiveChat,
+      getPersonaById,
+      isChatHydrated,
+      saveMessages,
+      sendMessage,
+      urlAgentOverride,
+      urlThinkOverride
+    ]
   )
 
   const handleClearMessages = useCallback(() => {

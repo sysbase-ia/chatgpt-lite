@@ -9,8 +9,17 @@ import {
   type LanguageModel,
   type ToolSet
 } from 'ai'
+import {
+  assertRequestHasAnyScope,
+  getControlPlaneAuthorizationHeader,
+  MissingKeycloakBearerTokenError,
+  MissingKeycloakScopeError,
+  parseScopeList,
+  resolveRequestProfileAccess
+} from '@/lib/control-plane-auth'
+import { getAgentProfileMap, isAgentAllowedForProfiles, pickFirstAllowedAgent } from '@/lib/profile-agent-map'
 
-export const runtime = 'edge'
+export const runtime = 'nodejs'
 
 let cachedModel:
   | {
@@ -114,9 +123,93 @@ type ChatRequestPayload = {
   think?: string
 }
 
+type ControlPlaneTokenUsage = {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+type ControlPlaneUsage = {
+  request?: ControlPlaneTokenUsage
+  session?: ControlPlaneTokenUsage
+  modelProvider?: string
+  model?: string
+  promptTokens?: number
+  capturedAt?: string
+}
+
 type ControlPlaneChatResponse = {
   text?: string
+  usage?: ControlPlaneUsage
+  agentId?: string
+  sessionKey?: string
   error?: string
+}
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
+function normalizeUsagePart(raw: unknown): ControlPlaneTokenUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const row = raw as Record<string, unknown>
+  const part: ControlPlaneTokenUsage = {
+    inputTokens: toNumber(row.inputTokens),
+    outputTokens: toNumber(row.outputTokens),
+    totalTokens: toNumber(row.totalTokens),
+    cacheReadTokens: toNumber(row.cacheReadTokens),
+    cacheWriteTokens: toNumber(row.cacheWriteTokens)
+  }
+  if (
+    part.inputTokens === undefined &&
+    part.outputTokens === undefined &&
+    part.totalTokens === undefined &&
+    part.cacheReadTokens === undefined &&
+    part.cacheWriteTokens === undefined
+  ) {
+    return undefined
+  }
+  return part
+}
+
+function buildTokenUsageDataPart(
+  usage: ControlPlaneUsage | undefined,
+  agentId?: string,
+  sessionKey?: string
+): Record<string, unknown> | undefined {
+  if (!usage || typeof usage !== 'object') return undefined
+  const data: Record<string, unknown> = {}
+  const request = normalizeUsagePart(usage.request)
+  const session = normalizeUsagePart(usage.session)
+  if (request) data.request = request
+  if (session) data.session = session
+  if (typeof usage.modelProvider === 'string' && usage.modelProvider.trim()) {
+    data.modelProvider = usage.modelProvider.trim()
+  }
+  if (typeof usage.model === 'string' && usage.model.trim()) {
+    data.model = usage.model.trim()
+  }
+  const promptTokens = toNumber(usage.promptTokens)
+  if (promptTokens !== undefined) {
+    data.promptTokens = promptTokens
+  }
+  if (typeof usage.capturedAt === 'string' && usage.capturedAt.trim()) {
+    data.capturedAt = usage.capturedAt.trim()
+  }
+  if (typeof agentId === 'string' && agentId.trim()) {
+    data.agentId = agentId.trim()
+  }
+  if (typeof sessionKey === 'string' && sessionKey.trim()) {
+    data.sessionKey = sessionKey.trim()
+  }
+  return Object.keys(data).length > 0 ? data : undefined
 }
 
 function convertToCoreMessage(msg: ChatCompletionMessage): ModelMessage {
@@ -181,6 +274,14 @@ function convertToCoreMessage(msg: ChatCompletionMessage): ModelMessage {
   }
 }
 
+function readRequiredChatScopes(): string[] {
+  const configured = parseScopeList(process.env.WEB_CHAT_REQUIRED_CHAT_SCOPES)
+  if (configured.length > 0) {
+    return configured
+  }
+  return ['chat.write']
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
   try {
     const toToolSetEntry = <T>(tool: T): ToolSet[string] => tool as ToolSet[string]
@@ -189,21 +290,75 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     const acceptHeader = req.headers.get('accept') ?? ''
     const wantsUiStream = acceptHeader.includes('text/event-stream')
+    const profileAccess = await resolveRequestProfileAccess(req)
+    try {
+      await assertRequestHasAnyScope(req, readRequiredChatScopes())
+    } catch (error) {
+      if (error instanceof MissingKeycloakBearerTokenError) {
+        return new Response('missing keycloak bearer token', {
+          status: 401,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        })
+      }
+      if (error instanceof MissingKeycloakScopeError) {
+        return new Response(error.message, {
+          status: 403,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        })
+      }
+      throw error
+    }
+    if (profileAccess.mode === 'denied') {
+      return new Response('missing required profile scope (profile.all or profile.<id>)', {
+        status: 403,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      })
+    }
+
     const controlPlaneChatURL = process.env.CONTROL_PLANE_CHAT_URL?.trim()
     const controlPlaneChatStreamURL = process.env.CONTROL_PLANE_CHAT_STREAM_URL?.trim()
-    const controlPlaneChatToken = process.env.CONTROL_PLANE_CHAT_TOKEN?.trim()
     if (controlPlaneChatURL) {
+      let authHeader: Record<string, string> | undefined
+      try {
+        authHeader = await getControlPlaneAuthorizationHeader(req)
+      } catch (error) {
+        if (error instanceof MissingKeycloakBearerTokenError) {
+          return new Response('missing keycloak bearer token', {
+            status: 401,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+          })
+        }
+        throw error
+      }
+      const defaultAgentID = process.env.CONTROL_PLANE_AGENT_ID?.trim() || ''
+      let resolvedAgentID = (typeof agentId === 'string' ? agentId.trim() : '') || defaultAgentID
+      if (profileAccess.mode === 'restricted') {
+        const byAgent = await getAgentProfileMap()
+        if (
+          !resolvedAgentID ||
+          !isAgentAllowedForProfiles(resolvedAgentID, profileAccess.allowedProfiles, byAgent)
+        ) {
+          const fallbackAgent = pickFirstAllowedAgent(profileAccess.allowedProfiles, byAgent)
+          if (!fallbackAgent) {
+            return new Response('no allowed agent for current profile scope', {
+              status: 403,
+              headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+            })
+          }
+          resolvedAgentID = fallbackAgent
+        }
+      }
       const controlPlanePayload = {
         prompt,
         messages,
         input,
         sessionId: sessionId ?? undefined,
-        agentId: agentId ?? process.env.CONTROL_PLANE_AGENT_ID?.trim() ?? undefined,
+        agentId: resolvedAgentID || undefined,
         think: think ?? process.env.CONTROL_PLANE_THINK?.trim() ?? undefined
       }
       const controlPlaneHeaders = {
         'Content-Type': 'application/json',
-        ...(controlPlaneChatToken ? { Authorization: `Bearer ${controlPlaneChatToken}` } : {})
+        ...(authHeader || {})
       }
 
       if (wantsUiStream && controlPlaneChatStreamURL) {
@@ -262,11 +417,15 @@ export async function POST(req: NextRequest): Promise<Response> {
       const stream = createUIMessageStream({
         execute: async ({ writer }) => {
           const messageId = `cp-${Date.now()}`
-          writer.write({ type: 'start', messageId } as any)
-          writer.write({ type: 'text-start', id: messageId } as any)
-          writer.write({ type: 'text-delta', id: messageId, delta: text } as any)
-          writer.write({ type: 'text-end', id: messageId } as any)
-          writer.write({ type: 'finish' } as any)
+          const usageData = buildTokenUsageDataPart(body.usage, body.agentId, body.sessionKey)
+          writer.write({ type: 'start', messageId } as never)
+          writer.write({ type: 'text-start', id: messageId } as never)
+          writer.write({ type: 'text-delta', id: messageId, delta: text } as never)
+          writer.write({ type: 'text-end', id: messageId } as never)
+          if (usageData) {
+            writer.write({ type: 'data-tokenUsage', data: usageData } as never)
+          }
+          writer.write({ type: 'finish' } as never)
         }
       })
       return createUIMessageStreamResponse({ stream })
